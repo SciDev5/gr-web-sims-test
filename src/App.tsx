@@ -1,26 +1,18 @@
-import React from 'react';
-import logo from './logo.svg';
-import './App.css';
+import React from "react";
+import CR2DSysRenderer from "./render/2d/CR2DSysRenderer";
+import WebGL2SysRenderer from "./render/gl/WebGL2SysRenderer";
+import TestCR2DSystem from "./sims/TestCR2DSystem";
+import TestGLSystem from "./sims/TestGLSystem";
 
-function App() {
-  return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.tsx</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
-    </div>
-  );
+
+export default class App extends React.Component {
+    render(): React.ReactNode {
+        return (
+            <div className="App">
+                <WebGL2SysRenderer width={100} height={100} sys={()=>new TestGLSystem()}/>
+                <CR2DSysRenderer width={100} height={100} sys={()=>new TestCR2DSystem()}/>
+            </div>
+        );
+    }
 }
 
-export default App;
