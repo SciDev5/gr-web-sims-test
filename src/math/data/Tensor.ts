@@ -10,10 +10,21 @@ export default class Tensor {
     public get nComponents() { return this.dim.reduce((a,b)=>a*b,1) }
     private get diagCompInterval() { return Arr.genFromFn(this.dim.length,i=>this.dim[0]**i).reduce((a,b)=>a+b,1) }
 
-    private constructor(dim:readonly number[],data:readonly number[],diag?:boolean) {
+    private constructor(dim:readonly number[],data:readonly number[], diag:boolean, check=true) {
         this.dim = dim;
         this.data = data;
-        this.diag = diag ?? false;
+        this.diag = diag;
+        if (check) {
+            if (diag && !this.isSquare)
+                throw new Error(`Tensor must be square when diagonal. got:[${diag?"diag/":""}${dim}]`);
+            if (dim.some(d=>d<=0))
+                throw new Error(`Tensor cannot have negative dimension. got: [${dim}]`);
+            const expectedNElts = diag ?
+                (dim[0] ?? 1) :
+                (this.nComponents);
+            if (data.length !== expectedNElts)
+                throw new Error(`Tensor size did not match data size. dim:[${diag?"diag/":""}${dim}], expectedNElts:[${expectedNElts}], gotNElts:[${data.length}]`);
+        }
     }
     
     private arrI(iDim:number[]):number {
@@ -61,7 +72,7 @@ export default class Tensor {
             const { diagCompInterval } = this;
             const diagonalComponents = Arr.genFromFn(this.dim.length,i=>this.data[i*diagCompInterval]);
 
-            return new Tensor(this.dim,diagonalComponents,true);
+            return new Tensor(this.dim,diagonalComponents,true,false);
         } else throw new Error("(Tensor).diagify: cannot diagify non square tensor");
         
     }
@@ -80,21 +91,21 @@ export default class Tensor {
         }
         const data = guarranteedDiag ? Arr.genFromFn(dim[0],i=>dataSummed[diagCompInterval*i]) : dataSummed;
 
-        return new Tensor(dim,data,guarranteedDiag);
+        return new Tensor(dim,data,guarranteedDiag,false);
     }
     public mul(n:number):Tensor {
-        return new Tensor(this.dim,this.data.map(v=>v*n),this.diag);
+        return new Tensor(this.dim,this.data.map(v=>v*n),this.diag,false);
     }
     public inv():Tensor {
         if (this.diag)
-            return new Tensor(this.dim,this.data.map(v=>1/v),this.diag);
+            return new Tensor(this.dim,this.data.map(v=>1/v),this.diag,false);
         else
             throw new Error("(Tensor).inv: I'm too lazy to figure out how to invert a non-diagonal tensor. deal with it.");
     }
 
     /**
      * Einstein sum (dies of math, then dies of death)
-     * @param z tensor and param set , index by dimensions of t, value of `>=0` gets mapped to new tensor output, value of `<0` gets einstein-summed.
+     * @param tps tensor and param set , index by dimensions of t, value of `>=0` gets mapped to new tensor output, value of `<0` gets einstein-summed.
      */
     public static einsteinSum(...tps:{t:Tensor,p:number[]}[]):Tensor {
         for (const {t,p} of tps)
@@ -129,8 +140,8 @@ export default class Tensor {
         const
             dim    = outVars.map(v=>v.dimSz), 
             sumDim = sumVars.map(v=>v.dimSz),
-            dimTensor    = new Tensor(dim,   []), { nComponents }                 = dimTensor, 
-            sumDimTensor = new Tensor(sumDim,[]), { nComponents: nComponentsSum } = sumDimTensor;
+            dimTensor    = new Tensor(dim,   [],false,false), { nComponents }                 = dimTensor, 
+            sumDimTensor = new Tensor(sumDim,[],false,false), { nComponents: nComponentsSum } = sumDimTensor;
         
         const data:number[] = [];
             
@@ -177,7 +188,92 @@ export default class Tensor {
             }
         }
 
-        return new Tensor(dim,data);
+        return new Tensor(dim,data,false,true);
+    }
+    
+    /**
+     * Einstein sum (dies of math, then dies of death)
+     * @param tps tensor and param set , index by dimensions of t, value of `>=0` gets mapped to new tensor output, value of `<0` gets einstein-summed.
+     */
+    public static indexedSum(...tps:{t:Tensor,p:number[]}[]):Tensor {
+        for (const {t,p} of tps)
+            if (p.length !== t.dim.length) throw new Error(`Tensor.indexedSum: tensor params did not match rank: <expected:[${t.dim.length}] got:[${p.length}]>`);
+
+        const
+            outVarsRaw:EinsteinSumVar[] = [];
+
+        for (let n = 0; n < tps.length; n++) {
+            const {t,p} = tps[n];
+            for (let di = 0; di < p.length; di++) {
+                const
+                    pv = p[di],
+                    dimSz = t.dim[di],
+                    varInfo = outVarsRaw[pv] ?? {dimSz,tpis:[]};
+                
+                if (varInfo.dimSz !== dimSz)
+                    throw new Error(`Tensor.indexedSum: tensor params did not match dimensions: <expected:[${t.dim}][${dimSz}] got:[${varInfo.dimSz}]>`);
+                
+                varInfo.tpis.push({t:n,pi:di});
+
+                outVarsRaw[pv] = varInfo;
+            }
+        }
+
+        const
+            outVars = outVarsRaw.filter(v=>v!==undefined);
+
+        const
+            dim = outVars.map(v=>v.dimSz), 
+            dimTensor  = new Tensor(dim, [],false,false), { nComponents } = dimTensor;
+        
+        const data:number[] = [];
+            
+        const iDim = Arr.genFill(dim.length,0);
+        let i = 0;
+        while (i < nComponents) {
+            const fullCoords:number[][] = Arr.genFromFn(tps.length,_=>[]);
+
+            for (let vi = 0; vi < dim.length; vi++) {
+                for (const tpi of outVars[vi].tpis)
+                    fullCoords[tpi.t][tpi.pi] = iDim[vi];
+            }
+
+            data[i] = fullCoords.map((coord,k)=>tps[k].t.dataAt(coord)).reduce((a,b)=>a+b);
+
+            i++;
+            iDim[0]++;
+            for (let k = 0; k < iDim.length-1; k++) {
+                if (iDim[k] === dim[k]) {
+                    iDim[k] = 0;
+                    iDim[k+1]++;
+                }
+            }
+        }
+
+        return new Tensor(dim,data,false,true);
+    }
+
+    public static vec(val:number[]):Tensor {
+        return new Tensor([val.length],val,false,true);
+    }
+    public static diag(val:number[],rank:number):Tensor {
+        return new Tensor(Arr.genFill(rank,val.length),val,true,false);
+    }
+    /**
+     * Create a new rank-2 tensor.
+     * @param val Tensor contents [lowest level of array is first index]
+     */
+    public static t2(val:number[][]):Tensor {
+        const dim0 = val.length, dim1 = val[0]?.length ?? -1;
+        if (dim0 === 0 || dim1 === 0)
+            throw new Error("Cannot create empty Rank 2 Tensor");
+        if (!Arr.allEqual(val.map(v=>v.length)))
+            throw new Error(`Cannot create Rank 2 Tensor with varying size. got:[{${val.map(v=>v.length).sort().filter((_,i,a)=>a[i]!==a[i-1])}},${dim0}]`);
+        
+        return new Tensor([dim1,dim0],val.flat(),false,false);
+    }
+    public static tN(dim:number[],data:number[],diag=false):Tensor {
+        return new Tensor(dim,data,diag,true);
     }
 }
 
