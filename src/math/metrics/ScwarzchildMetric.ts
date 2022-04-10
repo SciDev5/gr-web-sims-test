@@ -1,6 +1,6 @@
 import consts from "../consts";
 import Tensor from "../data/Tensor";
-import { Gen_g, HorizJumper as AsymptoteJumper, Scale_dτ } from "../GeodesicIntegrator";
+import { Gen_g, HorizJumper as AsymptoteJumper, MetricSign, Scale_dλ } from "../GeodesicIntegrator";
 
 export function schwarzchildMetric(rs:number,dims:2|3|4):Gen_g {
     const { c } = consts;
@@ -85,21 +85,31 @@ export function schwarzchildMetric(rs:number,dims:2|3|4):Gen_g {
     };
 }
 
-export const schwarzchild_dτScaler:Scale_dτ = (
-    {data:[t0,r0,a0,b0]},
-    {data:[t1,r1,a1,b1]},
-    {data:[t2,r2,a2,b2]}
-)=>{
-    return Math.min(1,Math.abs((1-r0)*r0**2),Math.abs(1/r1));
-};
+export const schwarzchild_metricSign:MetricSign = "spacelike-positive";
 
-export function schwarzchild_aysmptoteJumper(drJ:number):AsymptoteJumper {
-    return (p0,dτ)=>{
-        const {data:[,r0,...an0]} = p0;
-        if (dτ > 0 && r0 > 1 && r0 < 1+drJ)
-            return Tensor.vec([0,1-drJ,...an0]);
-        if (dτ < 0 && r0 < 1 && r0 > 1-drJ)
-            return Tensor.vec([0,1+drJ,...an0]);
-        return p0;
+export function schwarzchild_dλScaler(rs:number):Scale_dλ {
+    return (
+        {data:[t0,r0,a0,b0]},
+        {data:[t1,r1,a1,b1]},
+        {data:[t2,r2,a2,b2]}
+    )=>{
+        return Math.min(1,Math.abs((rs-r0)*r0**2),Math.abs(1/r1));
+    };
+}
+
+export function schwarzchild_aysmptoteJumper(rs:number,drJ_:number):AsymptoteJumper {
+    return (p0,p1,dλ)=>{
+        const {data:[,r0,...a0]} = p0, {data:[,r1,...a1]} = p1;
+        let drJ = 0;
+        if (dλ > 0 && r0 > rs && r0 < rs+drJ_)
+            drJ = rs-drJ_-r0;
+        if (dλ < 0 && r0 < rs && r0 > rs-drJ_)
+            drJ = rs+drJ_-r0;
+        if (drJ === 0)
+            return p0;
+        else {
+            const dλJ = drJ/r1;
+            return Tensor.vec([0,r0+drJ,...a0.map((v0,i)=>v0+dλJ*a1[i])]);
+        }
     };
 }
